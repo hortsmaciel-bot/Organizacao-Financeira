@@ -53,7 +53,7 @@ Troque o arquivo no GitHub (**Add file → Upload files**, mesmo nome). O Netlif
 ## Dúvidas comuns
 
 - **"Falta configurar o config.js"**: o passo 1.4 não foi feito ou o arquivo não subiu no GitHub.
-- **Entrei e tudo está vazio**: normal, é uma conta nova. Os dados do app de teste do Claude não são copiados; o seu painel começa em branco em outubro/2026.
+- **Entrei e tudo está vazio**: normal, é uma conta nova. Os dados do app de teste do Claude não são copiados; o painel começa em branco.
 - **E-mail ou senha incorretos**: confira se marcou *Auto Confirm User* no passo 1.5; senão, use "Esqueci minha senha".
 - **Erro ao salvar**: confirme que rodou o `supabase.sql` inteiro e que está logada.
 - **Backup**: Supabase → **Table Editor → docs → Export** baixa todos os seus dados em CSV quando quiser.

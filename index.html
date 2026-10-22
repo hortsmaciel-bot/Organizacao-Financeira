@@ -583,10 +583,7 @@
     });
   }
 
-  /* ================= Supabase adapter =================
-     Exposes the same tiny document API the app was written against
-     (collection/doc, get/set/update/add/delete, onSnapshot), stored in a
-     single Postgres table "docs" protected by row-level security. */
+  /* ================= Supabase adapter ================= */
   var supa = null;
   function makeDb(sb, userId){
     var T = "docs";
@@ -659,7 +656,6 @@
         onSnapshot: function(next, error){ return subscribe({coll:coll, id:id, next:next, error:error}); }
       };
     }
-    // live sync between devices
     try{
       sb.channel("docs-sync").on("postgres_changes", {event:"*", schema:"public", table:T}, function(p){
         var rec = (p.new && p.new.collection) ? p.new : p.old;
@@ -809,7 +805,10 @@
 
     var html = monthbar();
 
-    var budgetTag = (budgetOv ? ' &middot; renda editada' : '') + (bb.extra>0 ? ' &middot; +'+fmt(bb.extra)+' de renda extra' : '') + (bb.carry>0 ? ' &middot; +'+fmt(bb.carry)+' do mês anterior' : '');
+    var salaryPaid = !!(state.config.salaryPaidByMonth && state.config.salaryPaidByMonth[ym]);
+    var extrasThis = state.extraIncomes.filter(function(e){ return e.month===ym; });
+    var extrasGot = extrasThis.filter(function(e){ return e.received; }).length;
+    var budgetTag = ' &middot; salário '+(salaryPaid?'✓ recebido':'a receber') + (extrasThis.length ? ' &middot; extras '+extrasGot+'/'+extrasThis.length+' recebidos' : '') + (budgetOv ? ' &middot; renda editada' : '') + (bb.extra>0 ? ' &middot; +'+fmt(bb.extra)+' de renda extra' : '') + (bb.carry>0 ? ' &middot; +'+fmt(bb.carry)+' do mês anterior' : '');
     html += '<div class="stats">' +
       '<button class="stat" style="text-align:left;border:1px solid var(--border);" data-act="edit-budget-value" aria-label="Editar orçamento deste mês">' +
         '<div class="k">Orçamento</div><div class="v num">'+fmt(budget)+' <span style="font-size:9px;opacity:.5;">&#9998;</span></div></button>' +
@@ -964,11 +963,11 @@
     var html = '';
     if (installments.length){
       html += '<div style="padding:0 12px;"><span class="group-label g-parcelado">🔁 Parcelado</span></div>' +
-        installments.map(function(p){ return purchaseRow(p, ym, ro); }).join('');
+        installments.map(function(p){ return purchaseRow(p, ym); }).join('');
     }
     if (avista.length){
       html += '<div style="padding:0 12px;"><span class="group-label g-avista">⚡ À vista</span></div>' +
-        avista.map(function(p){ return purchaseRow(p, ym, ro); }).join('');
+        avista.map(function(p){ return purchaseRow(p, ym); }).join('');
     }
     if (!installments.length && !avista.length){
       html += '<div class="row" style="padding-left:16px;"><span style="font-size:12.5px;color:var(--ink-faint);">Nenhum lançamento neste mês.</span></div>';
@@ -1024,7 +1023,7 @@
     html += '<div id="next-invoice-anchor" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);font-weight:700;margin:16px 2px 6px;">⏭️ Prévia da fatura de '+monthLabel(nextYm)+'</div>' +
       '<div class="card-list" style="margin-bottom:12px;opacity:.92;">' +
         '<div class="row"><span class="cat-dot" style="background:'+(c.color||'#999')+'"></span><div class="info"><div class="name">'+escapeHtml(c.name)+'</div><div class="meta">'+ncc.purchases.length+' lançamento(s) previstos</div></div><div class="value">'+fmt(ncc.total)+'</div></div>' +
-        purchaseGroups(ncc.purchases, nextYm, true) +
+        purchaseGroups(ncc.purchases, nextYm) +
       '</div>';
 
     html += '<button class="add-btn" data-act="new-card">+ Novo cartão</button>' +
@@ -1232,43 +1231,6 @@
       '</form>';
   }
 
-  function sheetInvoiceForm(card, ym){
-    var cc = monthData(ym).cards.find(function(x){ return x.card.id===card.id; });
-    var isNext = ym > state.month;
-    return sheetHead((isNext?"Próxima fatura":"Fatura fechada")+" · "+monthLabel(ym)) +
-      '<p style="font-size:13px;color:var(--ink-muted);margin:-4px 0 14px;">'+escapeHtml(card.name)+'</p>' +
-      '<form id="form-invoice">' +
-        '<div class="field"><label>Valor da fatura de '+monthLabel(ym)+'</label>' +
-          '<input id="fi-value" inputmode="decimal" required value="'+String(cc.total).replace('.',',')+'"></div>' +
-        '<div class="hint">'+(isNext
-          ? 'Esse valor só pesa em '+monthLabel(ym)+' — não entra no gasto do mês atual.'
-          : 'Esse valor entra no gasto de '+monthLabel(ym)+' no lugar da soma dos lançamentos ('+fmt(cc.calc)+').')+'</div>' +
-        '<div class="btn-row">' +
-          (cc.invoiceSet ? '<button type="button" class="btn-danger-text" data-act="reset-invoice">Usar soma dos lançamentos</button>' : '') +
-          '<button type="submit" class="btn btn-primary">Salvar fatura</button>' +
-        '</div>' +
-      '</form>';
-  }
-
-  function bindInvoiceForm(card, ym){
-    var form = document.getElementById('form-invoice');
-    if (!form) return;
-    form.onsubmit = function(e){
-      e.preventDefault();
-      var patch = {invoiceByMonth:{}}; patch.invoiceByMonth[ym] = parseMoney(document.getElementById('fi-value').value);
-      docRef("cards", card.id).update(patch)
-        .then(function(){ closeSheet(); showToast("Fatura de "+monthLabel(ym)+" salva."); })
-        .catch(function(){ showToast("Erro ao salvar."); });
-    };
-    var rb = document.querySelector('[data-act="reset-invoice"]');
-    if (rb) rb.onclick = function(){
-      var patch = {invoiceByMonth:{}}; patch.invoiceByMonth[ym] = null;
-      docRef("cards", card.id).update(patch)
-        .then(function(){ closeSheet(); showToast("Usando a soma dos lançamentos."); })
-        .catch(function(){ showToast("Erro ao salvar."); });
-    };
-  }
-
   function sheetActualForm(doc, ym){
     var reserved = effectiveValue(doc, ym, "value");
     var actual = Number((doc.actualByMonth && doc.actualByMonth[ym]) || 0);
@@ -1289,11 +1251,14 @@
     var defaultBase = Number(state.config.budgetTotal || 0);
     var ov = bb.overridden;
     var extras = state.extraIncomes.filter(function(e){ return e.month===ym; });
+    var salaryPaid = !!(state.config.salaryPaidByMonth && state.config.salaryPaidByMonth[ym]);
     return sheetHead("Orçamento de " + monthLabel(ym)) +
       '<form id="form-budget">' +
         '<div class="field"><label>Salário/renda base de '+monthLabel(ym)+'</label>' +
           '<input id="fb-value" inputmode="decimal" required value="'+String(bb.base).replace('.',',')+'"></div>' +
         '<div class="hint">O valor que realmente entrou de salário nesse mês (ex: ganhou um pouco mais ou menos que o de costume). O saldo do mês anterior continua somando em cima, automaticamente.</div>' +
+        '<label style="display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;margin:0 0 14px;cursor:pointer;">' +
+          '<input type="checkbox" id="fb-paid" '+(salaryPaid?'checked':'')+' style="width:20px;height:20px;accent-color:var(--accent);flex:none;"> Já recebi o salário deste mês</label>' +
         '<div class="btn-row">' +
           (ov ? '<button type="button" class="btn-danger-text" data-act="reset-budget">Usar padrão ('+fmt(defaultBase)+')</button>' : '') +
           '<button type="submit" class="btn btn-primary">Salvar salário do mês</button>' +
@@ -1301,9 +1266,10 @@
       '</form>' +
       '<div style="height:1px;background:var(--border);margin:18px 0 16px;"></div>' +
       '<label style="display:block;font-size:11.5px;color:var(--ink-muted);margin-bottom:8px;font-weight:600;">Outras rendas de '+monthLabel(ym)+' <span style="font-weight:400;color:var(--ink-faint);">(freelas, presentes, reembolsos...)</span></label>' +
+      (extras.length ? '<p style="font-size:11.5px;color:var(--ink-faint);margin:-4px 0 8px;">Marque a caixinha quando o valor já tiver caído na conta.</p>' : '') +
       (extras.length===0 ? '<p style="font-size:12.5px;color:var(--ink-faint);margin:0 0 10px;">Nenhuma renda extra lançada neste mês.</p>' :
         '<div class="card-list" style="margin-bottom:10px;">' + extras.map(function(e){
-          return '<div class="row" style="padding:9px 10px;"><div class="info"><div class="name" style="font-size:13px;">'+escapeHtml(e.name)+'</div></div>' +
+          return '<div class="row" style="padding:9px 10px;"><input type="checkbox" data-act="extra-received" data-id="'+e.id+'" '+(e.received?'checked':'')+' aria-label="Já recebi" style="width:20px;height:20px;accent-color:var(--accent);flex:none;"><div class="info"><div class="name" style="font-size:13px;">'+escapeHtml(e.name)+'</div></div>' +
             '<div class="value" style="font-size:13px;">'+fmt(e.value)+'</div>' +
             '<button class="del-x" data-act="del-extra-income" data-id="'+e.id+'" aria-label="Remover">✕</button></div>';
         }).join('') + '</div>'
@@ -1406,17 +1372,6 @@
     });
     document.querySelectorAll('[data-act="toggle-card-acc"]').forEach(function(b){
       b.onclick = function(){ var id=b.getAttribute('data-id'); state.cardOpen[id]=!state.cardOpen[id]; render(); };
-    });
-    document.querySelectorAll('[data-act="edit-invoice"]').forEach(function(b){
-      b.onclick = function(e){
-        e.stopPropagation();
-        var cd = state.cards.find(function(x){ return x.id===b.getAttribute('data-id'); });
-        var y = b.getAttribute('data-ym');
-        if (cd){ openSheet(sheetInvoiceForm(cd, y)); bindInvoiceForm(cd, y); }
-      };
-    });
-    document.querySelectorAll('[data-act="goto-cards-next"]').forEach(function(b){
-      b.onclick = function(){ state.selectedCardId = b.getAttribute('data-id'); state.tab = "cartoes"; render(); };
     });
     document.querySelectorAll('[data-act="select-card"]').forEach(function(b){
       b.onclick = function(){ state.selectedCardId = b.getAttribute('data-id'); render(); };
@@ -1640,6 +1595,25 @@
         showToast("Padrão restaurado neste mês.");
       }).catch(function(){ showToast("Erro ao salvar."); });
     };
+    var paidCb = document.getElementById('fb-paid');
+    if (paidCb) paidCb.onchange = function(){
+      var v = paidCb.checked;
+      var patch = {salaryPaidByMonth:{}}; patch.salaryPaidByMonth[ym] = v;
+      docRef("config","main").update(patch).then(function(){
+        state.config.salaryPaidByMonth = Object.assign({}, state.config.salaryPaidByMonth, patch.salaryPaidByMonth);
+        showToast(v ? "Salário marcado como recebido." : "Salário marcado como a receber.");
+      }).catch(function(){ paidCb.checked = !v; showToast("Erro ao salvar."); });
+    };
+    document.querySelectorAll('[data-act="extra-received"]').forEach(function(cb){
+      cb.onchange = function(){
+        var id = cb.getAttribute('data-id'), v = cb.checked;
+        docRef("extraIncomes", id).update({received:v}).then(function(){
+          var it = state.extraIncomes.find(function(x){ return x.id===id; });
+          if (it) it.received = v;
+          showToast(v ? "Marcado como recebido." : "Marcado como a receber.");
+        }).catch(function(){ cb.checked = !v; showToast("Erro ao salvar."); });
+      };
+    });
     var extraForm = document.getElementById('form-extra-income');
     if (extraForm) extraForm.onsubmit = function(e){
       e.preventDefault();
@@ -1700,10 +1674,7 @@
         '<div class="card-list" style="padding:18px;">' + inner + '</div>' +
       '</div>';
   }
-  function authError(msg){
-    var el = document.getElementById("auth-msg");
-    if (el) el.textContent = msg || "";
-  }
+  function authError(msg){ var el = document.getElementById("auth-msg"); if (el) el.textContent = msg || ""; }
   function friendly(err){
     var m = (err && err.message) || "";
     if (/invalid login/i.test(m)) return "E-mail ou senha incorretos.";
