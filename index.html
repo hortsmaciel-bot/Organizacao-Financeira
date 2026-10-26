@@ -923,22 +923,45 @@
   }
 
   /* ---------- FIXOS ---------- */
+  function monthPicker(id, value, optional){
+    var p = value ? value.split("-") : ["",""];
+    var years = []; for (var y=2026; y<=2036; y++) years.push(String(y));
+    if (p[0] && years.indexOf(p[0])===-1) years.push(p[0]);
+    var blank = optional ? '<option value="">—</option>' : '';
+    return '<div style="display:flex;gap:6px;">' +
+      '<select id="'+id+'-m" style="flex:1.4;min-width:0;">'+blank+MESES.map(function(n,i){ var v=pad2(i+1); return '<option value="'+v+'"'+(p[1]===v?' selected':'')+'>'+n+'</option>'; }).join('')+'</select>' +
+      '<select id="'+id+'-y" style="flex:1;min-width:0;">'+blank+years.map(function(yy){ return '<option value="'+yy+'"'+(p[0]===yy?' selected':'')+'>'+yy+'</option>'; }).join('')+'</select>' +
+    '</div>';
+  }
+  function readMonthPicker(id){
+    var m = document.getElementById(id+'-m').value, y = document.getElementById(id+'-y').value;
+    return (m && y) ? (y+'-'+m) : '';
+  }
+
   function viewFixos(){
     var ym = state.month;
     var html = monthbar() + '<div class="section"><div class="section-head"><h2>💸 Custos fixos de '+monthLabel(ym)+'</h2></div>';
+    function fixedRow(f, on){
+      return '<div class="row clickable" data-act="edit-fixed" data-id="'+f.id+'"'+(on?'':' style="opacity:.6;"')+'>' +
+        '<div class="info"><div class="name">'+escapeHtml(f.name)+(f.kind==="reserve"?' <span class="chip parcela" style="margin-left:4px;">reserva</span>':'')+'</div><div class="meta">Vence dia '+(f.dueDay||'-')+(f.startMonth?' · desde '+monthLabel(f.startMonth):'')+(f.endMonth?' · até '+monthLabel(f.endMonth):'')+'</div></div>' +
+        '<div class="value">'+fmt(effectiveValue(f, ym, "value"))+'</div>' +
+      '</div>';
+    }
+    var act = state.fixedCosts.filter(function(f){ return fixedActiveInMonth(f, ym); });
+    var inact = state.fixedCosts.filter(function(f){ return !fixedActiveInMonth(f, ym); });
     if (state.fixedCosts.length===0){
       html += '<div class="empty-state">Você ainda não tem custos fixos cadastrados.</div>';
+    } else if (act.length===0){
+      html += '<div class="empty-state">Nenhum custo fixo vale em '+monthLabel(ym)+'.</div>';
     } else {
-      html += '<div class="card-list">' + state.fixedCosts.map(function(f){
-        var on = fixedActiveInMonth(f, ym);
-        return '<div class="row clickable" data-act="edit-fixed" data-id="'+f.id+'"'+(on?'':' style="opacity:.55;"')+'>' +
-          '<div class="info"><div class="name">'+escapeHtml(f.name)+(f.kind==="reserve"?' <span class="chip parcela" style="margin-left:4px;">reserva</span>':'')+(on?'':' <span class="chip pendente" style="margin-left:4px;">não vale em '+monthLabel(ym)+'</span>')+'</div><div class="meta">Vence dia '+(f.dueDay||'-')+(f.startMonth?' · desde '+monthLabel(f.startMonth):'')+(f.endMonth?' · até '+monthLabel(f.endMonth):'')+'</div></div>' +
-          '<div class="value">'+fmt(effectiveValue(f, ym, "value"))+'</div>' +
-        '</div>';
-      }).join('') + '</div>';
+      html += '<div class="card-list">' + act.map(function(f){ return fixedRow(f, true); }).join('') + '</div>';
     }
-    html += '<button class="add-btn" data-act="new-fixed">+ Novo custo fixo</button>' +
-      '<p style="font-size:11.5px;color:var(--ink-faint);margin-top:10px;">Adicionar ou remover um custo aqui vale a partir de <b>'+monthLabel(ym)+'</b> (o mês mostrado acima). Os meses anteriores não mudam e continuam somando como estavam.</p></div>';
+    html += '<button class="add-btn" data-act="new-fixed">+ Novo custo fixo</button>';
+    if (inact.length){
+      html += '<button class="add-btn" data-act="toggle-inactive-fixed" style="margin-top:14px;border-style:solid;">'+(state.showInactiveFixed?'Esconder':'Ver')+' os '+inact.length+' que NÃO valem em '+monthLabel(ym)+' (já encerrados ou ainda não começaram)</button>';
+      if (state.showInactiveFixed) html += '<div class="card-list" style="margin-top:8px;">' + inact.map(function(f){ return fixedRow(f, false); }).join('') + '</div>';
+    }
+    html += '<p style="font-size:11.5px;color:var(--ink-faint);margin-top:10px;">Adicionar ou remover um custo aqui vale a partir de <b>'+monthLabel(ym)+'</b> (o mês mostrado acima). Os meses anteriores não mudam e continuam somando como estavam. A lista acima mostra só o que vale neste mês, e é exatamente isso que entra na soma da Visão.</p></div>';
     return html;
   }
 
@@ -1150,8 +1173,8 @@
           '<span>É uma reserva mensal com controle de gasto real (ex: supermercado, lavanderia) — você reserva um valor por mês e vai lançando o quanto gastou de fato, sem mudar o total do mês.</span>' +
         '</label>' +
         '<div class="field-row">' +
-          '<div class="field"><label>Vale a partir de</label><input id="ff-start" type="month" value="'+(existing ? (f.startMonth||'') : state.month)+'"></div>' +
-          '<div class="field"><label>Até (opcional)</label><input id="ff-end" type="month" value="'+(f.endMonth||'')+'"></div>' +
+          '<div class="field"><label>Vale a partir de</label>'+monthPicker('ff-start', existing ? (f.startMonth||'') : state.month, true)+'</div>' +
+          '<div class="field"><label>Até (opcional)</label>'+monthPicker('ff-end', f.endMonth||'', true)+'</div>' +
         '</div>' +
         '<div class="hint">Os meses antes do "a partir de" não mostram nem somam este custo. Deixe "até" vazio se ele continua valendo.</div>' +
         '<div class="hint">Mudar o valor aqui muda todos os meses em que o custo vale. Para mudar só um mês, edite direto na Visão daquele mês.</div>' +
@@ -1381,6 +1404,9 @@
     document.querySelectorAll('[data-act="toggle-card-acc"]').forEach(function(b){
       b.onclick = function(){ var id=b.getAttribute('data-id'); state.cardOpen[id]=!state.cardOpen[id]; render(); };
     });
+    document.querySelectorAll('[data-act="toggle-inactive-fixed"]').forEach(function(b){
+      b.onclick = function(){ state.showInactiveFixed = !state.showInactiveFixed; render(); };
+    });
     document.querySelectorAll('[data-act="select-card"]').forEach(function(b){
       b.onclick = function(){ state.selectedCardId = b.getAttribute('data-id'); render(); };
     });
@@ -1429,8 +1455,8 @@
         value: parseMoney(document.getElementById('ff-value').value),
         dueDay: parseInt(document.getElementById('ff-day').value,10) || null,
         kind: isReserve ? "reserve" : "normal",
-        startMonth: document.getElementById('ff-start').value || null,
-        endMonth: document.getElementById('ff-end').value || null
+        startMonth: readMonthPicker('ff-start') || null,
+        endMonth: readMonthPicker('ff-end') || null
       };
       if (!data.name) return;
       if (data.startMonth && data.endMonth && data.startMonth > data.endMonth){ showToast("O mês final precisa ser depois do inicial."); return; }
