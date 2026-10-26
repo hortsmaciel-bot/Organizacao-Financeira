@@ -924,18 +924,21 @@
 
   /* ---------- FIXOS ---------- */
   function viewFixos(){
-    var html = '<div class="section"><div class="section-head"><h2>💸 Custos fixos mensais</h2></div>';
+    var ym = state.month;
+    var html = monthbar() + '<div class="section"><div class="section-head"><h2>💸 Custos fixos de '+monthLabel(ym)+'</h2></div>';
     if (state.fixedCosts.length===0){
       html += '<div class="empty-state">Você ainda não tem custos fixos cadastrados.</div>';
     } else {
       html += '<div class="card-list">' + state.fixedCosts.map(function(f){
-        return '<div class="row clickable" data-act="edit-fixed" data-id="'+f.id+'">' +
-          '<div class="info"><div class="name">'+escapeHtml(f.name)+(f.kind==="reserve"?' <span class="chip parcela" style="margin-left:4px;">reserva</span>':'')+'</div><div class="meta">Vence dia '+(f.dueDay||'-')+(f.startMonth?' · desde '+monthLabel(f.startMonth):'')+(f.endMonth?' · até '+monthLabel(f.endMonth):'')+'</div></div>' +
-          '<div class="value">'+fmt(f.value)+'</div>' +
+        var on = fixedActiveInMonth(f, ym);
+        return '<div class="row clickable" data-act="edit-fixed" data-id="'+f.id+'"'+(on?'':' style="opacity:.55;"')+'>' +
+          '<div class="info"><div class="name">'+escapeHtml(f.name)+(f.kind==="reserve"?' <span class="chip parcela" style="margin-left:4px;">reserva</span>':'')+(on?'':' <span class="chip pendente" style="margin-left:4px;">não vale em '+monthLabel(ym)+'</span>')+'</div><div class="meta">Vence dia '+(f.dueDay||'-')+(f.startMonth?' · desde '+monthLabel(f.startMonth):'')+(f.endMonth?' · até '+monthLabel(f.endMonth):'')+'</div></div>' +
+          '<div class="value">'+fmt(effectiveValue(f, ym, "value"))+'</div>' +
         '</div>';
       }).join('') + '</div>';
     }
-    html += '<button class="add-btn" data-act="new-fixed">+ Novo custo fixo</button></div>';
+    html += '<button class="add-btn" data-act="new-fixed">+ Novo custo fixo</button>' +
+      '<p style="font-size:11.5px;color:var(--ink-faint);margin-top:10px;">Adicionar ou remover um custo aqui vale a partir de <b>'+monthLabel(ym)+'</b> (o mês mostrado acima). Os meses anteriores não mudam e continuam somando como estavam.</p></div>';
     return html;
   }
 
@@ -1146,7 +1149,12 @@
           '<input type="checkbox" id="ff-reserve" '+(isReserve?'checked':'')+' style="margin-top:2px;width:16px;height:16px;flex:none;">' +
           '<span>É uma reserva mensal com controle de gasto real (ex: supermercado, lavanderia) — você reserva um valor por mês e vai lançando o quanto gastou de fato, sem mudar o total do mês.</span>' +
         '</label>' +
-        '<div class="hint">Esse é o valor padrão, usado todo mês. Se em algum mês específico o valor vier diferente, edite-o direto na Visão daquele mês — isso não muda o padrão nem os outros meses.</div>' +
+        '<div class="field-row">' +
+          '<div class="field"><label>Vale a partir de</label><input id="ff-start" type="month" value="'+(existing ? (f.startMonth||'') : state.month)+'"></div>' +
+          '<div class="field"><label>Até (opcional)</label><input id="ff-end" type="month" value="'+(f.endMonth||'')+'"></div>' +
+        '</div>' +
+        '<div class="hint">Os meses antes do "a partir de" não mostram nem somam este custo. Deixe "até" vazio se ele continua valendo.</div>' +
+        '<div class="hint">Mudar o valor aqui muda todos os meses em que o custo vale. Para mudar só um mês, edite direto na Visão daquele mês.</div>' +
         '<div class="btn-row">' +
           (existing?'<button type="button" class="btn-danger-text" data-act="del-fixed" data-id="'+f.id+'">Excluir</button>':'') +
           '<button type="submit" class="btn btn-primary">'+(existing?'Salvar':'Adicionar')+'</button>' +
@@ -1420,9 +1428,12 @@
         name: document.getElementById('ff-name').value.trim(),
         value: parseMoney(document.getElementById('ff-value').value),
         dueDay: parseInt(document.getElementById('ff-day').value,10) || null,
-        kind: isReserve ? "reserve" : "normal"
+        kind: isReserve ? "reserve" : "normal",
+        startMonth: document.getElementById('ff-start').value || null,
+        endMonth: document.getElementById('ff-end').value || null
       };
       if (!data.name) return;
+      if (data.startMonth && data.endMonth && data.startMonth > data.endMonth){ showToast("O mês final precisa ser depois do inicial."); return; }
       var p;
       if (existing) p = docRef("fixedCosts", existing.id).update(data);
       else p = col("fixedCosts").add(Object.assign({active:true, statusByMonth:{}, actualByMonth:{}}, data));
@@ -1430,9 +1441,35 @@
     };
     var delBtn = document.querySelector('[data-act="del-fixed"]');
     if (delBtn) delBtn.onclick = function(){
-      var fid = delBtn.getAttribute('data-id');
-      openConfirm("Excluir este custo fixo? Essa ação não pode ser desfeita.", function(){
-        docRef("fixedCosts", fid).delete().then(function(){ showToast("Custo fixo excluído."); }).catch(function(){ showToast("Erro ao excluir."); });
+      openSheet(sheetDeleteFixed(existing, state.month));
+      bindDeleteFixedSheet(existing, state.month);
+    };
+  }
+
+  function sheetDeleteFixed(f, ym){
+    var startsLater = f.startMonth && f.startMonth >= ym;
+    return sheetHead("Remover custo fixo") +
+      '<p style="font-size:13px;color:var(--ink-muted);margin:-4px 0 16px;">'+escapeHtml(f.name)+'</p>' +
+      (startsLater ? '<p style="font-size:12.5px;color:var(--ink-faint);margin:0 0 12px;">Este custo só começa em '+monthLabel(f.startMonth)+', então nenhum mês anterior é afetado.</p>' :
+        '<button type="button" class="add-btn" data-act="do-end-fixed" style="margin-bottom:10px;">Remover a partir de '+monthLabel(ym)+' <span style="display:block;font-size:11px;color:var(--ink-faint);font-weight:400;margin-top:2px;">vale até '+monthLabel(addMonths(ym,-1))+'; os meses anteriores continuam com este custo e a mesma soma</span></button>') +
+      '<button type="button" class="add-btn" data-act="do-del-fixed-all" style="color:var(--bad);border-color:var(--bad);">Excluir de todos os meses <span style="display:block;font-size:11px;color:var(--bad);opacity:.8;font-weight:400;margin-top:2px;">some também dos meses passados e muda as somas deles</span></button>';
+  }
+
+  function bindDeleteFixedSheet(f, ym){
+    var endBtn = document.querySelector('[data-act="do-end-fixed"]');
+    if (endBtn) endBtn.onclick = function(){
+      var newEnd = addMonths(ym, -1);
+      if (f.endMonth && f.endMonth < newEnd) newEnd = f.endMonth;
+      docRef("fixedCosts", f.id).update({endMonth:newEnd})
+        .then(function(){ closeSheet(); showToast("Removido a partir de "+monthLabel(ym)+"."); })
+        .catch(function(){ showToast("Erro ao salvar."); });
+    };
+    var allBtn = document.querySelector('[data-act="do-del-fixed-all"]');
+    if (allBtn) allBtn.onclick = function(){
+      openConfirm("Excluir \""+f.name+"\" de todos os meses (passados e futuros)? Essa ação não pode ser desfeita.", function(){
+        docRef("fixedCosts", f.id).delete()
+          .then(function(){ showToast("Custo fixo excluído de todos os meses."); })
+          .catch(function(){ showToast("Erro ao excluir."); });
       });
     };
   }
